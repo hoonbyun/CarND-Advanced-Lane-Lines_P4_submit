@@ -4,7 +4,7 @@ import numpy as np
 import cv2
 import matplotlib.pyplot as plt
 import matplotlib.image as mpimg
-import glob
+import os
 
 
 
@@ -44,24 +44,25 @@ class LaneLineTracker():
         :param imgFolderPath:
         :return: bool
         """
+        CHESSBOARD_SIZE = (9,6)
         # prepare object points, like (0,0,0), (1,0,0), (2,0,0) ....,(6,5,0)
-        objp = np.zeros((6*8,3), np.float32)
-        objp[:,:2] = np.mgrid[0:8, 0:6].T.reshape(-1,2)
+        objp = np.zeros((CHESSBOARD_SIZE[0]*CHESSBOARD_SIZE[1],3), np.float32)
+        objp[:,:2] = np.mgrid[0:9, 0:6].T.reshape(-1,2)
 
         # Arrays to store object points and image points from all the images.
         objpoints = [] # 3d points in real world space
         imgpoints = [] # 2d points in image plane.
 
         # Make a list of calibration images
-        images = glob.glob(imgFolderPath)
+        images = os.listdir(imgFolderPath)
 
         # Step through the list and search for chessboard corners
         for idx, fname in enumerate(images):
-            img = cv2.imread(fname)
+            img = cv2.imread(imgFolderPath+os.sep+fname)
             gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
             # Find the chessboard corners
-            ret, corners = cv2.findChessboardCorners(gray, (8,6), None)
+            ret, corners = cv2.findChessboardCorners(gray, CHESSBOARD_SIZE, None)
 
             # If found, add object points, image points
             if ret == True:
@@ -69,11 +70,11 @@ class LaneLineTracker():
                 imgpoints.append(corners)
 
                 # Draw and display the corners
-                cv2.drawChessboardCorners(img, (8,6), corners, ret)
+                #cv2.drawChessboardCorners(img, CHESSBOARD_SIZE, corners, ret)
                 #write_name = 'corners_found'+str(idx)+'.jpg'
                 #cv2.imwrite(write_name, img)
-                cv2.imshow('img', img)
-                cv2.waitKey(500)
+                #cv2.imshow('img', img)
+                #cv2.waitKey(500)
         img_size = gray.shape
         ret, mtx, dist, rvecs, tvecs = cv2.calibrateCamera(objpoints, imgpoints, img_size,None,None)
         if ret:
@@ -98,7 +99,7 @@ class LaneLineTracker():
         sChannel = hls[:,:,2]
         binOut = np.zeros_like(sChannel)
         binOut[(sChannel >= thresh[0]) & (sChannel <= thresh[1])] = 1
-        return binOut:
+        return binOut
     def runAbsSobel(self, img, orient='x', thresh=(0, 255)):
         """
         Run absolute sobel gradient selection
@@ -163,25 +164,66 @@ class LaneLineTracker():
         dst = np.float32()
         M = cv2.getPerspectiveTransform(src, dst)
         return cv2.warpPerspective(img, M, img.shape)
-    def findLaneLines(self):
-        return NotImplemented:
+    def findLaneLines(self, warped, window_width, window_height, margin):
+
+        window_centroids = []  # Store the (left,right) window centroid positions per level
+        window = np.ones(window_width)  # Create our window template that we will use for convolutions
+
+        # First find the two starting positions for the left and right lane by using np.sum to get the vertical image slice
+        # and then np.convolve the vertical image slice with the window template
+
+        # Sum quarter bottom of image to get slice, could use a different ratio
+        l_sum = np.sum(warped[int(3 * warped.shape[0] / 4):, :int(warped.shape[1] / 2)], axis=0)
+        l_center = np.argmax(np.convolve(window, l_sum)) - window_width / 2
+        r_sum = np.sum(warped[int(3 * warped.shape[0] / 4):, int(warped.shape[1] / 2):], axis=0)
+        r_center = np.argmax(np.convolve(window, r_sum)) - window_width / 2 + int(warped.shape[1] / 2)
+
+        # Add what we found for the first layer
+        window_centroids.append((l_center, r_center))
+
+        # Go through each layer looking for max pixel locations
+        for level in range(1, (int)(warped.shape[0] / window_height)):
+            # convolve the window into the vertical slice of the image
+            image_layer = np.sum(
+                warped[int(warped.shape[0] - (level + 1) * window_height):int(warped.shape[0] - level * window_height),
+                :], axis=0)
+            conv_signal = np.convolve(window, image_layer)
+            # Find the best left centroid by using past left center as a reference
+            # Use window_width/2 as offset because convolution signal reference is at right side of window, not center of window
+            offset = window_width / 2
+            l_min_index = int(max(l_center + offset - margin, 0))
+            l_max_index = int(min(l_center + offset + margin, warped.shape[1]))
+            l_center = np.argmax(conv_signal[l_min_index:l_max_index]) + l_min_index - offset
+            # Find the best right centroid by using past right center as a reference
+            r_min_index = int(max(r_center + offset - margin, 0))
+            r_max_index = int(min(r_center + offset + margin, warped.shape[1]))
+            r_center = np.argmax(conv_signal[r_min_index:r_max_index]) + r_min_index - offset
+            # Add what we found for that layer
+            window_centroids.append((l_center, r_center))
+
+        return window_centroids
+
     def computeLaneCurv(self):
-        return NotImplemented:
+        return NotImplemented
 
         
-def main():
-    otLineLineTrk = LaneLineTracker()
-    #1 Camera calibration
-    otLineLineTrk.calibrateCamera(calImgPath)
-    for img in imgs:
-        #2 Distortion correction
-        #3 Apply gradient threshold
-        # abs sobel threshold (20, 100)
-        # mag sobel threshold (30, 100)
-        # dir sobel threshold (0.7, 1.5)
-        #4 Apply HLS selection threshold (170, 255)
-        #5 Apply Perspective transform
-        #6 Detect lane lines
-        #7 Determine lane line curvature
+
+imgPathToCal = './camera_cal'
+imgPathToTest = './test_images'
+imgSample = './camera_cal/calibration1.jpg'
+otLineLineTrk = LaneLineTracker()
+#1 Camera calibration
+otLineLineTrk.calibrateCamera(imgPathToCal)
+
+for img in imgs:
+    #2 Distortion correction
+    #3 Apply gradient threshold
+    # abs sobel threshold (20, 100)
+    # mag sobel threshold (30, 100)
+    # dir sobel threshold (0.7, 1.5)
+    #4 Apply HLS selection threshold (170, 255)
+    #5 Apply Perspective transform
+    #6 Detect lane lines
+    #7 Determine lane line curvature
     
     
