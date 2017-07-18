@@ -211,17 +211,24 @@ class LaneLineTracker():
 imgPathToCal = './camera_cal'
 imgPathToTest = './test_images'
 imgSample = './camera_cal/calibration1.jpg'
+imgListToTest = os.listdir(imgPathToTest)
 otLineLineTrk = LaneLineTracker()
 #1 Camera calibration
 otLineLineTrk.calibrateCamera(imgPathToCal)
 
-for img in imgs:
+for fFile in imgListToTest:
+    img = cv2.imread(imgPathToTest+os.sep+fFile)
     #2 Distortion correction
+    img = otLineLineTrk.undistImg(img)
     #3 Apply gradient threshold
     # abs sobel threshold (20, 100)
+    binAbs = otLineLineTrk.runAbsSobel(img, thresh=(20, 100))
     # mag sobel threshold (30, 100)
+    binMag = otLineLineTrk.runMagSobel(img, thresh=(30, 100))
     # dir sobel threshold (0.7, 1.5)
+    binDir = otLineLineTrk.runDirSobel(img, thresh=(0.7, 1.5))
     #4 Apply HLS selection threshold (170, 255)
+    binHls = otLineLineTrk.runHlsSelect(img, thresh=(170, 255))
     #5 Apply Perspective transform
     #6 Detect lane lines
     #7 Determine lane line curvature
