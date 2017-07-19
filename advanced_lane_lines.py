@@ -97,10 +97,11 @@ class LaneLineTracker():
         """
         hls = cv2.cvtColor(img, cv2.COLOR_BGR2HLS)
         sChannel = hls[:,:,2]
+        np.float64(sChannel)
         binOut = np.zeros_like(sChannel)
         binOut[(sChannel >= thresh[0]) & (sChannel <= thresh[1])] = 1
         return binOut
-    def runAbsSobel(self, img, orient='x', thresh=(0, 255)):
+    def runAbsSobel(self, img, orient='x', sobelKernel=3, thresh=(0, 255)):
         """
         Run absolute sobel gradient selection
         :param self:
@@ -111,12 +112,13 @@ class LaneLineTracker():
         """
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
         if orient == 'x':
-            absSobel = np.abs(cv2.Sobel(gray, cv2.CV_64F, 1, 0))
+            absSobel = np.absolute(cv2.Sobel(gray, cv2.CV_64F, 1, 0, sobelKernel))
         if orient == 'y':
-            absSobel = np.abs(cv2.Sobel(gray, cv2.CV_64F, 0, 1))
-        scaledSobel = np.unit8(255*absSobel/np.max(absSobel))
-        binOut = np.zeros_like(scaledSobel)
-        binOut[(scaledSobel >= thresh[0]) & (scaledSobel <= thresh[1])] = 1
+            absSobel = np.absolute(cv2.Sobel(gray, cv2.CV_64F, 0, 1, sobelKernel))
+        scaleFactor = 255/np.max(absSobel)
+        absSobel = scaleFactor*absSobel
+        binOut = np.zeros_like(absSobel)
+        binOut[(absSobel >= thresh[0]) & (absSobel <= thresh[1])] = 1
         return binOut
     def runMagSobel(self, sobelKernel=3, thresh=(0, 255)):
         """
@@ -130,8 +132,8 @@ class LaneLineTracker():
         sobelX = cv2.Sobel(gray, cv2.CV_64F, 1, 0, sobelKernel)
         sobelY = cv2.Sobel(gray, cv2.CV_64F, 0, 1, sobelKernel)
         sobelMag = np.sqrt(sobelX**2 + sobelY**2)
-        scaleFactor = 255.0/np.max(sobelMag)
-        sobelMag = (sobelMag*scaleFactor).astype(np.unit8)
+        scaleFactor = 255/np.max(sobelMag)
+        sobelMag = sobelMag*scaleFactor
         binOut = np.zeros_like(sobelMag)
         binOut[(sobelMag >= thresh[0]) & (sobelMag <= thresh[1])] = 1
         return binOut
@@ -149,9 +151,9 @@ class LaneLineTracker():
         sobelY = cv2.Sobel(gray, cv2.CV_64F, 0, 1, sobelKernel)
         absGradDir = np.arctan2(np.abs(sobelY), np.abs(sobelX))
         binOut = np.zeros_like(absGradDir)
-        binOut [(absGradDir >= thresh[0]) & absGradDir <= thresh[1]] = 1
+        binOut[(absGradDir >= thresh[0]) & (absGradDir <= thresh[1])] = 1
         return binOut
-    def runPerspectTrans(self, img):
+    def getPerspectTransMtx(self, img):
         """
         Transform img with perspective view
         :param self:
@@ -159,11 +161,21 @@ class LaneLineTracker():
         :return img corrected:
         """
         offset = 100
+        imgSize = (img.shape[1],img.shape[0])
         #TODO Find corners for the input of the perspective transform
-        src = np.float32()
-        dst = np.float32()
-        M = cv2.getPerspectiveTransform(src, dst)
-        return cv2.warpPerspective(img, M, img.shape)
+        src = np.zeros((4,2), np.float32)
+        dst = np.zeros((4,2), np.float32)
+        src[0] = [500,300] # left up
+        src[1] = [700,300] # right up
+        src[2] = [720,1100] # right bottom
+        src[1] = [720,200] # left bottom
+        dst[0] = [offset,offset]
+        dst[1] = [imgSize[0]-offset,offset]
+        dst[2] = [imgSize[0]-offset,imgSize[1]-offset]
+        dst[3] = [offset,imgSize[1]-offset]
+        transMtx = cv2.getPerspectiveTransform(src, dst)
+        invTransMtx = cv2.getPerspectiveTransform(dst, src)
+        return transMtx, invTransMtx
     def findLaneLines(self, warped, window_width, window_height, margin):
 
         window_centroids = []  # Store the (left,right) window centroid positions per level
@@ -229,8 +241,11 @@ for fFile in imgListToTest:
     binDir = otLineLineTrk.runDirSobel(img, thresh=(0.7, 1.5))
     #4 Apply HLS selection threshold (170, 255)
     binHls = otLineLineTrk.runHlsSelect(img, thresh=(170, 255))
+    binCombined = np.zeros_like(binAbs)
+    binCombined[(binAbs==1) | (binHls==1) & (binDir==1)] = 1
     #5 Apply Perspective transform
+    imgSize = (img.shape[1],img.shape[0])
+    transMtx, invTransMtx = otLineLineTrk.getPerspectTransMtx(binCombined)
+    birdViewImg = cv2.warpPerspective(binCombined, transMtx, imgSize)
     #6 Detect lane lines
     #7 Determine lane line curvature
-    
-    
