@@ -160,22 +160,12 @@ class LaneLineTracker():
         :param img:
         :return img corrected:
         """
-        offset = 100
-        imgSize = (img.shape[1],img.shape[0])
-        #TODO Find corners for the input of the perspective transform
-        src = np.zeros((4,2), np.float32)
-        dst = np.zeros((4,2), np.float32)
-        src[0] = [500,300] # left up
-        src[1] = [700,300] # right up
-        src[2] = [720,1100] # right bottom
-        src[1] = [720,200] # left bottom
-        dst[0] = [offset,offset]
-        dst[1] = [imgSize[0]-offset,offset]
-        dst[2] = [imgSize[0]-offset,imgSize[1]-offset]
-        dst[3] = [offset,imgSize[1]-offset]
+        src = np.float32([[(200, 720), (570, 470), (720, 470), (1130, 720)]])
+        dst = np.float32([[(350, 720), (350, 0), (980, 0), (980, 720)]])
         transMtx = cv2.getPerspectiveTransform(src, dst)
         invTransMtx = cv2.getPerspectiveTransform(dst, src)
         return transMtx, invTransMtx
+
     def findLaneLines(self, warped, window_width, window_height, margin):
 
         window_centroids = []  # Store the (left,right) window centroid positions per level
@@ -218,34 +208,33 @@ class LaneLineTracker():
     def computeLaneCurv(self):
         return NotImplemented
 
-        
-
 imgPathToCal = './camera_cal'
 imgPathToTest = './test_images'
 imgSample = './camera_cal/calibration1.jpg'
 imgListToTest = os.listdir(imgPathToTest)
 otLineLineTrk = LaneLineTracker()
-#1 Camera calibration
+# 1 Camera calibration
 otLineLineTrk.calibrateCamera(imgPathToCal)
 
 for fFile in imgListToTest:
     img = cv2.imread(imgPathToTest+os.sep+fFile)
-    #2 Distortion correction
+    # 2 Distortion correction
     img = otLineLineTrk.undistImg(img)
-    #3 Apply gradient threshold
+    # 3 Apply gradient threshold
     # abs sobel threshold (20, 100)
     binAbs = otLineLineTrk.runAbsSobel(img, thresh=(20, 100))
     # mag sobel threshold (30, 100)
     binMag = otLineLineTrk.runMagSobel(img, thresh=(30, 100))
     # dir sobel threshold (0.7, 1.5)
     binDir = otLineLineTrk.runDirSobel(img, thresh=(0.7, 1.5))
-    #4 Apply HLS selection threshold (170, 255)
+    # 4 Apply HLS selection threshold (170, 255)
     binHls = otLineLineTrk.runHlsSelect(img, thresh=(170, 255))
     binCombined = np.zeros_like(binAbs)
     binCombined[(binAbs==1) | (binHls==1) & (binDir==1)] = 1
-    #5 Apply Perspective transform
+    # 5 Apply Perspective transform
     imgSize = (img.shape[1],img.shape[0])
     transMtx, invTransMtx = otLineLineTrk.getPerspectTransMtx(binCombined)
     birdViewImg = cv2.warpPerspective(binCombined, transMtx, imgSize)
-    #6 Detect lane lines
-    #7 Determine lane line curvature
+    # 6 Detect lane lines
+    winCent = otLineLineTrk.findLaneLines(birdViewImg, int(imgSize[0]/20), int(imgSize[1]/10), 100)
+    # 7 Determine lane line curvature
