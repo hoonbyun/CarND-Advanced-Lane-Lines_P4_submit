@@ -208,6 +208,11 @@ class LaneLineTracker():
     def computeLaneCurv(self):
         return NotImplemented
 
+    def window_mask(self, width, height, img_ref, center, level):
+        output = np.zeros_like(img_ref)
+        output[int(img_ref.shape[0] - (level + 1) * height):int(img_ref.shape[0] - level * height), max(0, int(center - width / 2)):min(int(center + width / 2), img_ref.shape[1])] = 1
+        return output
+
 imgPathToCal = './camera_cal'
 imgPathToTest = './test_images'
 imgSample = './camera_cal/calibration1.jpg'
@@ -236,5 +241,35 @@ for fFile in imgListToTest:
     transMtx, invTransMtx = otLineLineTrk.getPerspectTransMtx(binCombined)
     birdViewImg = cv2.warpPerspective(binCombined, transMtx, imgSize)
     # 6 Detect lane lines
-    winCent = otLineLineTrk.findLaneLines(birdViewImg, int(imgSize[0]/20), int(imgSize[1]/10), 100)
+    window_width = int(imgSize[0]/20)
+    window_height = int(imgSize[1]/10)
+    window_centroids = otLineLineTrk.findLaneLines(birdViewImg, int(imgSize[0]/20), int(imgSize[1]/10), 100)
+    # If we found any window centers
+    if len(window_centroids) > 0:
+
+        # Points used to draw all the left and right windows
+        l_points = np.zeros_like(birdViewImg)
+        r_points = np.zeros_like(birdViewImg)
+
+        # Go through each level and draw the windows
+        for level in range(0, len(window_centroids)):
+            # Window_mask is a function to draw window areas
+            l_mask = otLineLineTrk.window_mask(window_width, window_height, birdViewImg, window_centroids[level][0], level)
+            r_mask = otLineLineTrk.window_mask(window_width, window_height, birdViewImg, window_centroids[level][1], level)
+            # Add graphic points from window mask here to total pixels found
+            l_points[(l_points == 255) | ((l_mask == 1))] = 255
+            r_points[(r_points == 255) | ((r_mask == 1))] = 255
+
+        # Draw the results
+        template = np.array(r_points + l_points, np.uint8)  # add both left and right window pixels together
+        zero_channel = np.zeros_like(template)  # create a zero color channel
+        template = np.array(cv2.merge((zero_channel, template, zero_channel)), np.uint8)  # make window pixels green
+        warpage = np.array(cv2.merge((birdViewImg, birdViewImg, birdViewImg)), np.uint8)  # making the original road pixels 3 color channels
+        output = cv2.addWeighted(warpage, 1, template, 0.5, 0.0)  # overlay the orignal road image with window results
+
+
+
+
+
+    print("end")
     # 7 Determine lane line curvature
