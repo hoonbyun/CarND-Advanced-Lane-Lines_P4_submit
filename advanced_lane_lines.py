@@ -160,15 +160,19 @@ class LaneLineTracker():
         :param img:
         :return img corrected:
         """
-        src = np.float32([[(200, 720), (570, 470), (720, 470), (1130, 720)]])
-        dst = np.float32([[(350, 720), (350, 0), (980, 0), (980, 720)]])
+        IMG_SIZE = (1280,720)
+        src = np.float32([[(200, IMG_SIZE[1]), (581, 460), (705, 460), (1130, IMG_SIZE[1])]])
+        dst = np.float32([[(360, IMG_SIZE[1]), (360, 0), (980, 0), (980, IMG_SIZE[1])]])
         transMtx = cv2.getPerspectiveTransform(src, dst)
         invTransMtx = cv2.getPerspectiveTransform(dst, src)
         return transMtx, invTransMtx
 
     def findLaneLines(self, warped, window_width, window_height, margin):
 
-        window_centroids = []  # Store the (left,right) window centroid positions per level
+        window_centroids_x = []  # Store the (left,right) window centroid positions per level
+        window_centroids_y = []
+        idx_y = warped[0]
+        idx_y_iter = 0
         window = np.ones(window_width)  # Create our window template that we will use for convolutions
 
         # First find the two starting positions for the left and right lane by using np.sum to get the vertical image slice
@@ -181,8 +185,10 @@ class LaneLineTracker():
         r_center = np.argmax(np.convolve(window, r_sum)) - window_width / 2 + int(warped.shape[1] / 2)
 
         # Add what we found for the first layer
-        window_centroids.append((l_center, r_center))
-
+        window_centroids_x.append((l_center, r_center))
+        idx_y -= (idx_y_iter*window_height + window_height/2.0)
+        window_centroids_y.append((idx_y,idx_y))
+        idx_y += 1
         # Go through each layer looking for max pixel locations
         for level in range(1, (int)(warped.shape[0] / window_height)):
             # convolve the window into the vertical slice of the image
@@ -201,12 +207,25 @@ class LaneLineTracker():
             r_max_index = int(min(r_center + offset + margin, warped.shape[1]))
             r_center = np.argmax(conv_signal[r_min_index:r_max_index]) + r_min_index - offset
             # Add what we found for that layer
-            window_centroids.append((l_center, r_center))
+            window_centroids_x.append((l_center, r_center))
+            idx_y -= (idx_y_iter * window_height + window_height / 2.0)
+            window_centroids_y.append((idx_y, idx_y))
+            idx_y += 1
 
-        return window_centroids
+        return window_centroids_x, window_centroids_y
 
-    def computeLaneCurv(self):
-        return NotImplemented
+    def computeLaneCurv(self, win_cent_x, win_cent_y):
+        line_pts_x = np.transpose(win_cent_x)
+        line_pts_y = np.transpose(win_cent_y)
+        ploty = np.linspace(0, 719, num=720)
+        left_fit = np.polyfit(line_pts_y[0], line_pts_x[0], 2)
+        right_fit = np.polyfit(line_pts_y[1], line_pts_x[1], 2)
+        left_fitx = left_fit[0]*ploty**2 + left_fit[1]*ploty + left_fit[2]
+        right_fitx = right_fit[0]*ploty**2 + right_fit[1]*ploty + right_fit[2]
+        y_eval = ploty[int(len(ploty)/2)]
+        left_curverad = ((1 + (2 * left_fit[0] * y_eval + left_fit[1]) ** 2) ** 1.5) / np.absolute(2 * left_fit[0])
+        right_curverad = ((1 + (2 * right_fit[0] * y_eval + right_fit[1]) ** 2) ** 1.5) / np.absolute(2 * right_fit[0])
+        return left_fitx, right_fitx, left_curverad, right_curverad
 
     def window_mask(self, width, height, img_ref, center, level):
         output = np.zeros_like(img_ref)
@@ -241,21 +260,21 @@ for fFile in imgListToTest:
     transMtx, invTransMtx = otLineLineTrk.getPerspectTransMtx(binCombined)
     birdViewImg = cv2.warpPerspective(binCombined, transMtx, imgSize)
     # 6 Detect lane lines
-    window_width = int(imgSize[0]/20)
-    window_height = int(imgSize[1]/10)
-    window_centroids = otLineLineTrk.findLaneLines(birdViewImg, int(imgSize[0]/20), int(imgSize[1]/10), 100)
+    window_width = int(imgSize[0]/30)
+    window_height = int(imgSize[1]/30)
+    window_centroids_x, window_centroids_y = otLineLineTrk.findLaneLines(birdViewImg, window_width, window_height, 100)
     # If we found any window centers
-    if len(window_centroids) > 0:
+    if len(window_centroids_x) > 0:
 
         # Points used to draw all the left and right windows
         l_points = np.zeros_like(birdViewImg)
         r_points = np.zeros_like(birdViewImg)
 
         # Go through each level and draw the windows
-        for level in range(0, len(window_centroids)):
+        for level in range(0, len(window_centroids_x)):
             # Window_mask is a function to draw window areas
-            l_mask = otLineLineTrk.window_mask(window_width, window_height, birdViewImg, window_centroids[level][0], level)
-            r_mask = otLineLineTrk.window_mask(window_width, window_height, birdViewImg, window_centroids[level][1], level)
+            l_mask = otLineLineTrk.window_mask(window_width, window_height, birdViewImg, window_centroids_x[level][0], level)
+            r_mask = otLineLineTrk.window_mask(window_width, window_height, birdViewImg, window_centroids_x[level][1], level)
             # Add graphic points from window mask here to total pixels found
             l_points[(l_points == 255) | ((l_mask == 1))] = 255
             r_points[(r_points == 255) | ((r_mask == 1))] = 255
@@ -266,10 +285,27 @@ for fFile in imgListToTest:
         template = np.array(cv2.merge((zero_channel, template, zero_channel)), np.uint8)  # make window pixels green
         warpage = np.array(cv2.merge((birdViewImg, birdViewImg, birdViewImg)), np.uint8)  # making the original road pixels 3 color channels
         output = cv2.addWeighted(warpage, 1, template, 0.5, 0.0)  # overlay the orignal road image with window results
+        output_unwaped = cv2.warpPerspective(output,invTransMtx,imgSize)
 
+        left_fitx, right_fitx, left_curverad, right_curverad = otLineLineTrk.computeLaneCurv(window_centroids_x, window_centroids_y)
 
+        # Drawing the lines
+        # Create an image to draw the lines on
+        ploty = np.linspace(0, 719, num=720)
+        warp_zero = np.zeros_like(birdViewImg).astype(np.uint8)
+        color_warp = np.dstack((warp_zero, warp_zero, warp_zero))
+        # Recast the x and y points into usable format for cv2.fillPoly()
+        pts_left = np.array([np.transpose(np.vstack([left_fitx, ploty]))])
+        pts_right = np.array([np.flipud(np.transpose(np.vstack([right_fitx, ploty])))])
+        pts = np.hstack((pts_left, pts_right))
 
+        # Draw the lane onto the warped blank image
+        cv2.fillPoly(color_warp, np.int_([pts]), (0, 255, 0))
 
+        # Warp the blank back to original image space using inverse perspective matrix (Minv)
+        newwarp = cv2.warpPerspective(color_warp, invTransMtx, (img.shape[1], img.shape[0]))
+        # Combine the result with the original image
+        result = cv2.addWeighted(img, 1, newwarp, 0.3, 0)
 
     print("end")
     # 7 Determine lane line curvature
