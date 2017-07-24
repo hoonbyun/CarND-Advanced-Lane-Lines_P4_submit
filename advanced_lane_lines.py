@@ -210,7 +210,6 @@ class LaneLineTracker():
             r_peak_idx = np.argmax(conv_signal[r_min_index:r_max_index]) + r_min_index
 
             idx_y -= window_height
-            print (idx_y)
             # Add what we found for that layer
             if conv_signal[l_peak_idx] > CONV_MIN_VALID_THRES:
                 l_center = l_peak_idx - offset
@@ -222,15 +221,29 @@ class LaneLineTracker():
         return window_left, window_right
 
     def computeLaneCurv(self, win_cent_left, win_cent_right):
+        #Weight based on the number of valid windows
+        #To put more weight on the sold line than discrete line
+        num_win_left = len(win_cent_left)
+        num_win_right = len(win_cent_right)
+        gain_left = float(num_win_left)/(num_win_left + num_win_right)
         ploty = np.linspace(0, 719, num=720)
         left_fit = np.polyfit(np.transpose(win_cent_left)[1], np.transpose(win_cent_left)[0], 2)
         right_fit = np.polyfit(np.transpose(win_cent_right)[1], np.transpose(win_cent_right)[0], 2)
-        left_fitx = left_fit[0]*ploty**2 + left_fit[1]*ploty + left_fit[2]
-        right_fitx = right_fit[0]*ploty**2 + right_fit[1]*ploty + right_fit[2]
+
+        #find best poly second and first order coeff, not offset
+        best_fit = np.zeros_like(left_fit)
+        best_fit[0] = left_fit[0]*gain_left + right_fit[0]*(1.0-gain_left)
+        best_fit[1] = left_fit[1]*gain_left + right_fit[1]*(1.0-gain_left)
+        left_fitx = best_fit[0]*ploty**2 + best_fit[1]*ploty + left_fit[2]
+        right_fitx = best_fit[0]*ploty**2 + best_fit[1]*ploty + right_fit[2]
+
         y_eval = ploty[int(len(ploty)/2)]
         left_curverad = ((1 + (2 * left_fit[0] * y_eval + left_fit[1]) ** 2) ** 1.5) / np.absolute(2 * left_fit[0])
         right_curverad = ((1 + (2 * right_fit[0] * y_eval + right_fit[1]) ** 2) ** 1.5) / np.absolute(2 * right_fit[0])
-        return left_fitx, right_fitx, left_curverad, right_curverad
+
+        #find the best curv
+        best_curv = gain_left*left_curverad + (1.0-gain_left)*right_curverad
+        return left_fitx, right_fitx, best_curv
 
     def window_mask(self, width, height, img_ref, center, level):
         output = np.zeros_like(img_ref)
@@ -294,7 +307,7 @@ for fFile in imgListToTest:
         warpPipeLines = cv2.warpPerspective(bwPipeLines,invTransMtx,imgSize)
         """
 
-        left_fitx, right_fitx, left_curverad, right_curverad = otLineLineTrk.computeLaneCurv(window_cent_left, window_cent_right)
+        left_fitx, right_fitx, best_curv = otLineLineTrk.computeLaneCurv(window_cent_left, window_cent_right)
 
         # Drawing the lines
         # Create an image to draw the lines on
