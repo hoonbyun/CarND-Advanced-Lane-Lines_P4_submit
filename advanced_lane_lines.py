@@ -169,9 +169,10 @@ class LaneLineTracker():
 
     def findLaneLines(self, warped, window_width, window_height, margin):
 
+        CONV_MIN_VALID_THRES = 100.0
         window_centroids_x = []  # Store the (left,right) window centroid positions per level
         window_centroids_y = []
-        idx_y = warped[0]
+        idx_y = warped.shape[0]
         idx_y_iter = 0
         window = np.ones(window_width)  # Create our window template that we will use for convolutions
 
@@ -188,29 +189,31 @@ class LaneLineTracker():
         window_centroids_x.append((l_center, r_center))
         idx_y -= (idx_y_iter*window_height + window_height/2.0)
         window_centroids_y.append((idx_y,idx_y))
-        idx_y += 1
+        idx_y_iter += 1
         # Go through each layer looking for max pixel locations
         for level in range(1, (int)(warped.shape[0] / window_height)):
-            # convolve the window into the vertical slice of the image
-            image_layer = np.sum(
-                warped[int(warped.shape[0] - (level + 1) * window_height):int(warped.shape[0] - level * window_height),
-                :], axis=0)
+            # convolve te window into the vertical slice of the image
+            image_layer = np.sum(warped[int(warped.shape[0] - (level + 1) * window_height):int(warped.shape[0] - level * window_height),:], axis=0)
             conv_signal = np.convolve(window, image_layer)
             # Find the best left centroid by using past left center as a reference
             # Use window_width/2 as offset because convolution signal reference is at right side of window, not center of window
             offset = window_width / 2
             l_min_index = int(max(l_center + offset - margin, 0))
             l_max_index = int(min(l_center + offset + margin, warped.shape[1]))
-            l_center = np.argmax(conv_signal[l_min_index:l_max_index]) + l_min_index - offset
+            l_peak_idx = np.argmax(conv_signal[l_min_index:l_max_index]) + l_min_index
+            if conv_signal[l_peak_idx] > CONV_MIN_VALID_THRES:
+                l_center = l_peak_idx - offset
             # Find the best right centroid by using past right center as a reference
             r_min_index = int(max(r_center + offset - margin, 0))
             r_max_index = int(min(r_center + offset + margin, warped.shape[1]))
-            r_center = np.argmax(conv_signal[r_min_index:r_max_index]) + r_min_index - offset
+            r_peak_idx = np.argmax(conv_signal[r_min_index:r_max_index]) + r_min_index
+            if conv_signal[r_peak_idx] > CONV_MIN_VALID_THRES:
+                r_center = r_peak_idx - offset
             # Add what we found for that layer
             window_centroids_x.append((l_center, r_center))
             idx_y -= (idx_y_iter * window_height + window_height / 2.0)
             window_centroids_y.append((idx_y, idx_y))
-            idx_y += 1
+            idx_y_iter += 1
 
         return window_centroids_x, window_centroids_y
 
@@ -246,15 +249,16 @@ for fFile in imgListToTest:
     img = otLineLineTrk.undistImg(img)
     # 3 Apply gradient threshold
     # abs sobel threshold (20, 100)
-    binAbs = otLineLineTrk.runAbsSobel(img, thresh=(20, 100))
+    binAbs = otLineLineTrk.runAbsSobel(img, thresh=(20, 255))
     # mag sobel threshold (30, 100)
-    binMag = otLineLineTrk.runMagSobel(img, thresh=(30, 100))
+    binMag = otLineLineTrk.runMagSobel(img, thresh=(30, 255))
     # dir sobel threshold (0.7, 1.5)
-    binDir = otLineLineTrk.runDirSobel(img, thresh=(0.7, 1.5))
+    binDir = otLineLineTrk.runDirSobel(img, thresh=(0.6, 1.5))
     # 4 Apply HLS selection threshold (170, 255)
-    binHls = otLineLineTrk.runHlsSelect(img, thresh=(170, 255))
+    binHls = otLineLineTrk.runHlsSelect(img, thresh=(150, 255))
     binCombined = np.zeros_like(binAbs)
-    binCombined[(binAbs==1) | (binHls==1) & (binDir==1)] = 1
+    #binCombined[(binAbs==1) & (binMag==1) & (binHls==1) & (binDir==1)] = 1
+    binCombined[((binAbs==1)|(binHls==1)) & (binDir==1)] = 1
     # 5 Apply Perspective transform
     imgSize = (img.shape[1],img.shape[0])
     transMtx, invTransMtx = otLineLineTrk.getPerspectTransMtx(binCombined)
@@ -262,7 +266,7 @@ for fFile in imgListToTest:
     # 6 Detect lane lines
     window_width = int(imgSize[0]/30)
     window_height = int(imgSize[1]/30)
-    window_centroids_x, window_centroids_y = otLineLineTrk.findLaneLines(birdViewImg, window_width, window_height, 100)
+    window_centroids_x, window_centroids_y = otLineLineTrk.findLaneLines(birdViewImg, window_width, window_height, 50)
     # If we found any window centers
     if len(window_centroids_x) > 0:
 
