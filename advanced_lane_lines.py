@@ -149,7 +149,7 @@ class LaneLineTracker():
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
         sobelX = cv2.Sobel(gray, cv2.CV_64F, 1, 0, sobelKernel)
         sobelY = cv2.Sobel(gray, cv2.CV_64F, 0, 1, sobelKernel)
-        absGradDir = np.arctan2(np.abs(sobelY), np.abs(sobelX))
+        absGradDir = np.abs(np.arctan2(np.abs(sobelY), np.abs(sobelX)))
         binOut = np.zeros_like(absGradDir)
         binOut[(absGradDir >= thresh[0]) & (absGradDir <= thresh[1])] = 1
         return binOut
@@ -161,10 +161,10 @@ class LaneLineTracker():
         :return img corrected:
         """
         IMG_SIZE = (1280,720)
-        #src = np.float32([[(200, IMG_SIZE[1]), (581, 460), (705, 460), (1130, IMG_SIZE[1])]])
-        #dst = np.float32([[(360, IMG_SIZE[1]), (360, 0), (980, 0), (980, IMG_SIZE[1])]])
-        src = np.float32([[(270, 685), (612, 440), (671, 440), (1066, 685)]])
-        dst = np.float32([[(360, 720), (360, 0), (980, 0), (980, 720)]])
+        src = np.float32([[(200, IMG_SIZE[1]), (581, 460), (705, 460), (1130, IMG_SIZE[1])]])
+        dst = np.float32([[(360, IMG_SIZE[1]), (360, 0), (980, 0), (980, IMG_SIZE[1])]])
+        #src = np.float32([[(270, 685), (612, 440), (671, 440), (1066, 685)]])
+        #dst = np.float32([[(360, 720), (360, 0), (980, 0), (980, 720)]])
         transMtx = cv2.getPerspectiveTransform(src, dst)
         invTransMtx = cv2.getPerspectiveTransform(dst, src)
         return transMtx, invTransMtx
@@ -210,7 +210,7 @@ class LaneLineTracker():
             r_peak_idx = np.argmax(conv_signal[r_min_index:r_max_index]) + r_min_index
 
             idx_y -= window_height
-            # Add what we found for that layer
+            # Validate if the convolution peak is larger than the threshold for better confidence
             if conv_signal[l_peak_idx] > CONV_MIN_VALID_THRES:
                 l_center = l_peak_idx - offset
                 window_left.append((l_center,idx_y))
@@ -221,8 +221,7 @@ class LaneLineTracker():
         return window_left, window_right
 
     def computeLaneCurv(self, win_cent_left, win_cent_right):
-        #Weight based on the number of valid windows
-        #To put more weight on the sold line than discrete line
+
         num_win_left = len(win_cent_left)
         num_win_right = len(win_cent_right)
         gain_left = float(num_win_left)/(num_win_left + num_win_right)
@@ -230,24 +229,21 @@ class LaneLineTracker():
         left_fit = np.polyfit(np.transpose(win_cent_left)[1], np.transpose(win_cent_left)[0], 2)
         right_fit = np.polyfit(np.transpose(win_cent_right)[1], np.transpose(win_cent_right)[0], 2)
 
-        #find best poly second and first order coeff, not offset
-        best_fit = np.zeros_like(left_fit)
-        best_fit[0] = left_fit[0]*gain_left + right_fit[0]*(1.0-gain_left)
-        best_fit[1] = left_fit[1]*gain_left + right_fit[1]*(1.0-gain_left)
-        left_fitx = best_fit[0]*ploty**2 + best_fit[1]*ploty + left_fit[2]
-        right_fitx = best_fit[0]*ploty**2 + best_fit[1]*ploty + right_fit[2]
+        left_fitx = left_fit[0]*ploty**2 + left_fit[1]*ploty + left_fit[2]
+        right_fitx = right_fit[0]*ploty**2 + right_fit[1]*ploty + right_fit[2]
 
         y_eval = ploty[int(len(ploty)/2)]
         left_curverad = ((1 + (2 * left_fit[0] * y_eval + left_fit[1]) ** 2) ** 1.5) / np.absolute(2 * left_fit[0])
         right_curverad = ((1 + (2 * right_fit[0] * y_eval + right_fit[1]) ** 2) ** 1.5) / np.absolute(2 * right_fit[0])
 
-        #find the best curv
+        #Weight based on the number of valid windows
+        #To put more weight on the sold line than discrete line
         best_curv = gain_left*left_curverad + (1.0-gain_left)*right_curverad
         return left_fitx, right_fitx, best_curv
 
-    def window_mask(self, width, height, img_ref, center, level):
+    def window_mask(self, width, height, img_ref, center_width, center_height):
         output = np.zeros_like(img_ref)
-        output[int(img_ref.shape[0] - (level + 1) * height):int(img_ref.shape[0] - level * height), max(0, int(center - width / 2)):min(int(center + width / 2), img_ref.shape[1])] = 1
+        output[int(center_height-height/2.0):int(center_height+height/2.0), max(0, int(center_width - width / 2)):min(int(center_width + width / 2), img_ref.shape[1])] = 1
         return output
 
 imgPathToCal = './camera_cal'
@@ -259,16 +255,16 @@ otLineLineTrk = LaneLineTracker()
 otLineLineTrk.calibrateCamera(imgPathToCal)
 
 for fFile in imgListToTest:
-    img = cv2.imread(imgPathToTest+os.sep+fFile)
+    img_org = cv2.imread(imgPathToTest+os.sep+fFile)
     # 2 Distortion correction
-    img = otLineLineTrk.undistImg(img)
+    img = otLineLineTrk.undistImg(img_org)
     # 3 Apply gradient threshold
     # abs sobel threshold (20, 100)
     binAbs = otLineLineTrk.runAbsSobel(img, thresh=(30, 255))
     # mag sobel threshold (30, 100)
     binMag = otLineLineTrk.runMagSobel(img, thresh=(30, 255))
     # dir sobel threshold (0.7, 1.5)
-    binDir = otLineLineTrk.runDirSobel(img, thresh=(0.6, 1.5))
+    binDir = otLineLineTrk.runDirSobel(img, thresh=(0.7, 1.3))
     # 4 Apply HLS selection threshold (170, 255)
     binHls = otLineLineTrk.runHlsSelect(img, thresh=(150, 255))
     binCombined = np.zeros_like(binAbs)
@@ -284,18 +280,18 @@ for fFile in imgListToTest:
     window_cent_left, window_cent_right = otLineLineTrk.findLaneLines(birdViewImg, window_width, window_height, 50)
     # If we found any window centers
     if len(window_cent_left) > 0:
-        """
         # Points used to draw all the left and right windows
         l_points = np.zeros_like(birdViewImg)
         r_points = np.zeros_like(birdViewImg)
 
         # Go through each level and draw the windows
         for level in range(0, len(window_cent_left)):
-            # Window_mask is a function to draw window areas
-            l_mask = otLineLineTrk.window_mask(window_width, window_height, birdViewImg, window_cent_left[level][0], level)
-            r_mask = otLineLineTrk.window_mask(window_width, window_height, birdViewImg, window_cent_right[level][0], level)
-            # Add graphic points from window mask here to total pixels found
+            l_mask = otLineLineTrk.window_mask(window_width, window_height, birdViewImg, window_cent_left[level][0], window_cent_left[level][1])
             l_points[(l_points == 255) | ((l_mask == 1))] = 255
+
+        # Go through each level and draw the windows
+        for level in range(0, len(window_cent_right)):
+            r_mask = otLineLineTrk.window_mask(window_width, window_height, birdViewImg, window_cent_right[level][0], window_cent_right[level][1])
             r_points[(r_points == 255) | ((r_mask == 1))] = 255
 
         # Draw the results
@@ -305,7 +301,6 @@ for fFile in imgListToTest:
         warpage = np.array(cv2.merge((birdViewImg, birdViewImg, birdViewImg)), np.uint8)  # making the original road pixels 3 color channels
         bwPipeLines = cv2.addWeighted(warpage, 1, template, 0.5, 0.0)  # overlay the orignal road image with window results
         warpPipeLines = cv2.warpPerspective(bwPipeLines,invTransMtx,imgSize)
-        """
 
         left_fitx, right_fitx, best_curv = otLineLineTrk.computeLaneCurv(window_cent_left, window_cent_right)
 
